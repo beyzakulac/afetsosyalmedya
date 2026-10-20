@@ -1,2 +1,12 @@
 pandas
+ feature/veri-hazirlama
 openpyxl
+numpy
+matplotlib
+scikit-learn
+xgboost
+tensorflow
+streamlit
+requests
+jupyter
+main
