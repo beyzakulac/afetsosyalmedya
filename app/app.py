@@ -1,90 +1,82 @@
-import streamlit as st
-import pandas as pd
+"""Ana sayfa: proje tanıtımı ve ilçe bazlı su tüketimi analizi (Beyza)."""
+from pathlib import Path
+
 import numpy as np
-from tensorflow.keras.models import load_model
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+import pandas as pd
+import streamlit as st
 
-# 1. SAYFA AYARLARI
-st.set_page_config(page_title="İBB Su Tüketim Tahmini", page_icon="💧", layout="wide")
-st.title("💧 İstanbul İlçe Bazlı Su Tüketim Tahmin Paneli")
+KOK = Path(__file__).resolve().parents[1]
+# 2023 dosyasında bazı ilçe adları kısaltılmış
+AD_DUZELT = {"B.ÇEKMECE": "BÜYÜKÇEKMECE", "K.ÇEKMECE": "KÜÇÜKÇEKMECE", "G.O.PAŞA": "GAZİOSMANPAŞA"}
+
+st.set_page_config(page_title="İstanbul Su Paneli", page_icon="💧", layout="wide")
+st.title("💧 İstanbul Baraj Doluluk ve Su Tüketimi Paneli")
 st.markdown(
-    "Bu panel, geçmiş tüketim verilerini inceleyerek LSTM derin öğrenme modeli ile su tüketim trendlerini analiz eder."
+    "**Ana konu:** İstanbul barajlarının 30 gün sonraki doluluk oranını tahmin etmek ve kritik seviye için erken uyarı vermek. "
+    "Bunun için soldaki menüden **Baraj Doluluk Tahmini** sayfasını açın.\n\n"
+    "Bu sayfa ise **ek analiz** olarak ilçe bazlı yıllık su tüketimini inceler."
 )
-
-
-# 2. VERİ VE MODEL YÜKLEME
-@st.cache_resource
-def modeli_getir():
-    return load_model("src/lstm_su_tahmin_modeli.keras")
 
 
 @st.cache_data
-def veriyi_getir():
-    return pd.read_csv("data//temizlenmis_gunluk_tuketim.csv")
+def yillik_tuketim():
+    """2011-2022 yıllık ilçe tüketimi (temizlenmiş veriden) + 2023 gerçek değerleri (aylık dosyanın toplamı)."""
+    gunluk = pd.read_csv(KOK / "data" / "temizlenmis_gunluk_tuketim.csv", parse_dates=["Tarih"])
+    yillik = gunluk.groupby(["İlçe", gunluk["Tarih"].dt.year])["Gunluk_Tuketim_m3"].sum().unstack()
+    yillik.index = yillik.index.str.strip()
+
+    aylik = pd.read_excel(KOK / "data" / "raw" / "ilce-baznda-su-tuketim-miktar-2023.xlsx")
+    aylik.columns = [str(c).strip() for c in aylik.columns]
+    aylik = aylik.dropna(subset=["İLÇELER"])
+    aylik["İLÇELER"] = aylik["İLÇELER"].str.strip().replace(AD_DUZELT)
+    aylik = aylik[aylik["İLÇELER"] != "GENEL TOPLAM"].set_index("İLÇELER")
+    yillik[2023] = aylik[[str(a) for a in range(202301, 202313)]].sum(axis=1)
+    return yillik / 1e6   # milyon m³
 
 
-model = modeli_getir()
-df = veriyi_getir()
+yillik = yillik_tuketim()
+YILLAR = list(range(2011, 2023))
 
-# 3. YAN MENÜ (SIDEBAR)
-st.sidebar.header("⚙️ Kontrol Paneli")
-ilceler = df["İlçe"].unique()
-varsayilan_index = list(ilceler).index("ADALAR") if "ADALAR" in ilceler else 0
-secilen_ilce = st.sidebar.selectbox(
-    "Bir İlçe Seçiniz:", ilceler, index=varsayilan_index
+st.info(
+    "ℹ️ İlçe tüketim verisi **yıllık** olarak yayımlanıyor (2023 hariç, o yıl aylık). Bu yüzden analizi yıllık yapıyoruz. "
+    "Yıllık toplamı günlere bölüp günlük tahmin yapmak, her gün aynı değeri tekrar eden yapay bir seri üretir; "
+    "böyle bir seride model gerçekte bir şey öğrenmeden mükemmel görünür."
 )
 
+# --- 1. Seçilen ilçenin yıllık tüketimi ---
+st.header("1. İlçe bazında yıllık tüketim")
+ilce = st.selectbox("İlçe seçin", sorted(yillik.index), index=sorted(yillik.index).index("ADALAR"))
+seri = yillik.loc[ilce, YILLAR + [2023]].rename("Tüketim (milyon m³)")
+seri.index = pd.to_datetime([f"{y}-01-01" for y in seri.index])
+seri.index.name = "Yıl"
+st.line_chart(seri, y_label="Milyon m³")
+artis = (yillik.loc[ilce, 2022] / yillik.loc[ilce, 2011] - 1) * 100
+c1, c2 = st.columns(2)
+c1.metric("2022 tüketimi", f"{yillik.loc[ilce, 2022]:.2f} milyon m³")
+c2.metric("2011 → 2022 değişim", f"%{artis:+.0f}")
 
-df_ilce = df[df["İlçe"] == secilen_ilce].copy()
+# --- 2. En çok tüketen ilçeler ---
+st.header("2. 2022'de en çok su tüketen ilçeler")
+st.bar_chart(yillik[2022].sort_values(ascending=False).head(15), horizontal=True, x_label="Milyon m³")
 
-# 4. VERİ ÖN İŞLEME VE PENCERELEME (Eğitimdeki işlemlerin simülasyonu)
-scaler = MinMaxScaler(feature_range=(0, 1))
-scaled_data = scaler.fit_transform(df_ilce[["Gunluk_Tuketim_m3"]])
+# --- 3. 2023 tahmini: trend modeli taban modeli geçebiliyor mu? ---
+st.header("3. 2023 tüketim tahmini: basit modeller")
+st.markdown(
+    "Her ilçe için 2011–2022 verisiyle 2023 tüketimini iki yolla tahmin edip gerçek 2023 değeriyle karşılaştırıyoruz:\n"
+    "- **Taban (değişmez):** 2023 = 2022\n"
+    "- **Doğrusal trend:** 2011–2022 yıllarına düz bir çizgi uydurup 2023'e uzatmak"
+)
+trend = yillik[YILLAR].apply(lambda s: np.polyval(np.polyfit(YILLAR, s.values, 1), 2023), axis=1)
+gercek = yillik[2023]
+mape = lambda t: (abs(t - gercek) / gercek).mean() * 100
+sonuc = pd.DataFrame({"Ortalama yüzde hata (MAPE)": [mape(yillik[2022]), mape(trend)]},
+                     index=["Taban: 2023 = 2022", "Doğrusal trend"])
+st.dataframe(sonuc.style.format("%{:.1f}"), width="content")
+st.caption(
+    "Bulgu: yıllık ilçe tüketimi yıldan yıla çok az değişiyor; bu yüzden 'geçen yılın aynısı' tahmini trend modelinden "
+    "daha isabetli. Karmaşık bir model kurmadan önce basit bir tabanla karşılaştırmanın neden önemli olduğunu gösteriyor."
+)
+detay = pd.DataFrame({"2022": yillik[2022], "Gerçek 2023": gercek, "Taban tahmini": yillik[2022], "Trend tahmini": trend})
+st.dataframe(detay.loc[[ilce]].style.format("{:.2f}"), width="stretch")
 
-
-def create_sequences(data, seq_length):
-    X, y = [], []
-    for i in range(len(data) - seq_length):
-        X.append(data[i : (i + seq_length)])
-        y.append(data[i + seq_length])
-    return np.array(X), np.array(y)
-
-
-ZAMAN_ADIMI = 30
-X, y_gercek_scaled = create_sequences(scaled_data, ZAMAN_ADIMI)
-
-st.subheader(f"📊 {secilen_ilce} - Gerçek vs Tahmin Edilen Tüketim (m³)")
-
-# 5. TAHMİN YAPMA VE EKRANA BASMA
-if len(X) > 0:
-    with st.spinner("Yapay zeka tahminleri hesaplıyor..."):
-        # Modele veriyi verip tahminleri alıyoruz
-        y_pred_scaled = model.predict(X)
-
-        # 0-1 arasındaki veriyi tekrar metreküp (m³) cinsine çeviriyoruz
-        y_pred = scaler.inverse_transform(y_pred_scaled)
-        y_gercek = scaler.inverse_transform(y_gercek_scaled.reshape(-1, 1))
-
-        # Grafikte çizdirmek için ortak bir DataFrame oluşturuyoruz
-        tahmin_df = pd.DataFrame(
-            {"Gerçek Tüketim": y_gercek.flatten(), "LSTM Tahmini": y_pred.flatten()}
-        )
-
-        # Sonucu arayüz grafiği olarak ekrana basıyoruz
-        st.line_chart(
-            tahmin_df, color=["#0000FF", "#FF0000"]
-        )  # Gerçek: Mavi, Tahmin: Kırmızı
-
-        # Modelin hata metriklerini hesaplayıp arayüzde estetik kutular (metric) içinde gösteriyoruz
-        rmse = np.sqrt(mean_squared_error(y_gercek, y_pred))
-        mae = mean_absolute_error(y_gercek, y_pred)
-
-        st.markdown("### Model Performans Metrikleri")
-        col1, col2 = st.columns(2)
-        col1.metric("Ortalama Mutlak Hata (MAE)", f"{mae:.2f} m³")
-        col2.metric("Hata Yön Sapması (RMSE)", f"{rmse:.2f} m³")
-else:
-    st.warning(
-        "Bu ilçe için yeterli veri bulunmuyor (Modelin geçmişe bakması için en az 30 gün gereklidir)."
-    )
+st.caption("Veri: İBB Açık Veri Portalı, ilçe bazında su tüketim miktarları (m³). Grafiklerde milyon m³ kullanılmıştır.")
