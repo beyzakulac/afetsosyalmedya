@@ -6,7 +6,7 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout
 
 # 1. VERİYİ YÜKLEME
 # Neden: Temizlenmiş verimizi modelin kullanabilmesi için Pandas ile okuyoruz.
-df = pd.read_csv("data/processed/temizlenmis_gunluk_tuketim.csv")
+df = pd.read_csv("data//temizlenmis_gunluk_tuketim.csv")
 
 # Şimdilik sadece tek bir ilçe (ADALAR) üzerinden model mimarisini test ediyoruz.
 df_ilce = df[df["İlçe"] == "ADALAR"].copy()

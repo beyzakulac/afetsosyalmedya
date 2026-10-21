@@ -21,7 +21,7 @@ def modeli_getir():
 
 @st.cache_data
 def veriyi_getir():
-    return pd.read_csv("data/processed/temizlenmis_gunluk_tuketim.csv")
+    return pd.read_csv("data//temizlenmis_gunluk_tuketim.csv")
 
 
 model = modeli_getir()
