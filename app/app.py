@@ -35,9 +35,6 @@ secilen_ilce = st.sidebar.selectbox(
     "Bir İlçe Seçiniz:", ilceler, index=varsayilan_index
 )
 
-st.info(
-    "⚠️ Not: Modelimiz şu an için sadece ADALAR ilçesinin geçmiş verileriyle eğitilmiştir. Diğer ilçelerdeki tahminler, ADALAR'dan öğrenilen genel patern üzerinden yapılacaktır."
-)
 
 df_ilce = df[df["İlçe"] == secilen_ilce].copy()
 
