@@ -1,5 +1,4 @@
 pandas
- feature/veri-hazirlama
 openpyxl
 numpy
 matplotlib
@@ -9,4 +8,3 @@ tensorflow
 streamlit
 requests
 jupyter
-main
